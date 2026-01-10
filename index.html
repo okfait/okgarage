@@ -3,7 +3,7 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
-    <title>okGARAGE v1.51.0</title>
+    <title>okGARAGE v1.52.1</title>
     <script src="https://cdn.tailwindcss.com"></script>
     <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.4.0/css/all.min.css">
     
@@ -1053,8 +1053,22 @@
                     } else {
                         document.documentElement.style.setProperty('--trim-spacing', '-1.1px');
                     }
+
+                    // INITIALIZE QUEST WEIGHTS
+                    if (!this.data.questWeights) this.data.questWeights = {};
+                    CAR_QUESTS.forEach(q => {
+                        if (typeof this.data.questWeights[q.name] === 'undefined') {
+                            this.data.questWeights[q.name] = 100; // New quests get high priority initially
+                        }
+                    });
+
                 } else {
                     document.documentElement.style.setProperty('--trim-spacing', '-1.1px');
+                    // INITIALIZE QUEST WEIGHTS FOR NEW USER
+                    this.data.questWeights = {};
+                    CAR_QUESTS.forEach(q => {
+                        this.data.questWeights[q.name] = 100;
+                    });
                 }
             }
 
@@ -1454,9 +1468,40 @@
                      });
                 }
                 
+                // WEIGHTED RANDOM SELECTION ALGORITHM
+                const pickWeighted = (excludeNames = []) => {
+                    // Filter out excluded names
+                    const pool = CAR_QUESTS.filter(q => !excludeNames.includes(q.name));
+                    
+                    if (pool.length === 0) return CAR_QUESTS[0]; // Fallback should rarely happen
+
+                    let totalWeight = 0;
+                    pool.forEach(q => {
+                        // Default weight is 100 if not set
+                        const w = (this.data.questWeights && this.data.questWeights[q.name]) ? this.data.questWeights[q.name] : 100;
+                        totalWeight += w;
+                    });
+
+                    let random = Math.random() * totalWeight;
+                    for (let i = 0; i < pool.length; i++) {
+                        const qName = pool[i].name;
+                        const weight = (this.data.questWeights && this.data.questWeights[qName]) ? this.data.questWeights[qName] : 100;
+                        
+                        if (random < weight) {
+                            return pool[i];
+                        }
+                        random -= weight;
+                    }
+                    return pool[0];
+                };
+
                 this.activeCar.quests = [];
+                const pickedNames = [];
+
                 for(let i=0; i<3; i++){
-                    const q = CAR_QUESTS[Math.floor(Math.random() * CAR_QUESTS.length)];
+                    const q = pickWeighted(pickedNames);
+                    pickedNames.push(q.name);
+
                     this.activeCar.quests.push({
                         txt: q.name, 
                         xp: q.xp, 
@@ -1567,6 +1612,27 @@
                     
                     q.done = true;
                     q.timerRunning = false; // clean up state
+                    
+                    // UPDATE WEIGHTS
+                    const completedName = q.txt;
+                    // Ensure weights object exists
+                    if (!this.data.questWeights) this.data.questWeights = {};
+                    
+                    // Set completed quest weight to very low (1)
+                    this.data.questWeights[completedName] = 1;
+                    
+                    // Increase weight of all other quests
+                    // We only need to iterate over known quest names in CAR_QUESTS to keep it clean, 
+                    // or just iterate over keys in questWeights if we trust it. 
+                    // Better to iterate CAR_QUESTS to ensure we catch everything.
+                    CAR_QUESTS.forEach(questDef => {
+                         if (questDef.name !== completedName) {
+                             const currentW = this.data.questWeights[questDef.name] || 100;
+                             // Cap at some reasonable max if needed, but 1000 is fine
+                             this.data.questWeights[questDef.name] = Math.min(currentW + 10, 1000); 
+                         }
+                    });
+
                     this.gainGlobalXp(q.xp);
                     this.activeCar.xp += q.xp;
                     this.updateCarXpUI(); 
